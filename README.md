@@ -67,8 +67,8 @@ await client.watch(lambda state: print(state.rgb))
 
 - `rgb`: `(red, green, blue)`
 - `hex`: CSS-style hex color
-- `last_set_unix_ms`: timestamp used to dedupe stale/repeated updates
-- `live`: whether the source is live
+- `last_set_unix_ms`: timestamp for last color update
+- `live`: whether vedal is live/lamp is streaming
 
 The default base URL is `http://45.61.59.181:8080`, but pass another URL to
 `LavaLampClient(...)` if the server moves.
