@@ -6,12 +6,13 @@ import asyncio
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-DEFAULT_BASE_URL = "http://45.61.59.181:8080"
+DEFAULT_BASE_URL = "https://api.neurolavalamp.com"
 SSE_REJECTED_STATUSES = {429, 503}
 
 
@@ -43,6 +44,10 @@ class LavaLampState:
     @property
     def blue(self) -> int:
         return self.rgb[2]
+
+    @property
+    def rgb_list(self) -> list[int]:
+        return list(self.rgb)
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> "LavaLampState":
@@ -93,9 +98,13 @@ class LavaLampClient:
         *,
         config: ConnectionConfig | None = None,
         client: httpx.AsyncClient | None = None,
+        emit_delay_seconds: float = 0.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.config = config or ConnectionConfig()
+        self.emit_delay_seconds = float(emit_delay_seconds)
+        if self.emit_delay_seconds < 0:
+            raise ValueError("emit_delay_seconds must be non-negative")
         self._client = client
         self._owns_client = client is None
 
@@ -139,23 +148,35 @@ class LavaLampClient:
 
         last_state: LavaLampState | None = None
 
+        async def accepted_states(
+            states: AsyncIterator[LavaLampState],
+        ) -> AsyncIterator[LavaLampState]:
+            nonlocal last_state
+            async for state in states:
+                if should_emit(last_state, state):
+                    last_state = state
+                    yield state
+
         while True:
             try:
-                async for state in self._stream_sse():
-                    if should_emit(last_state, state):
-                        last_state = state
-                        yield state
+                async for state in delay_states(
+                    accepted_states(self._stream_sse()),
+                    self.emit_delay_seconds,
+                ):
+                    yield state
             except SSERejectedError:
-                async for state in self._poll_until_sse_retry(last_state):
-                    if should_emit(last_state, state):
-                        last_state = state
-                        yield state
+                async for state in delay_states(
+                    accepted_states(self._poll_until_sse_retry(last_state)),
+                    self.emit_delay_seconds,
+                ):
+                    yield state
                 continue
             except (httpx.HTTPError, json.JSONDecodeError, ValueError):
-                async for state in self._poll_until_sse_retry(last_state):
-                    if should_emit(last_state, state):
-                        last_state = state
-                        yield state
+                async for state in delay_states(
+                    accepted_states(self._poll_until_sse_retry(last_state)),
+                    self.emit_delay_seconds,
+                ):
+                    yield state
 
     async def _poll_until_sse_retry(
         self, last_state: LavaLampState | None
@@ -216,6 +237,50 @@ def poll_interval_for(state: LavaLampState | None, config: ConnectionConfig) -> 
     if state is not None and not state.live:
         return config.offline_poll_interval
     return config.fast_poll_interval
+
+
+async def delay_states(
+    states: AsyncIterator[LavaLampState],
+    emit_delay_seconds: float,
+) -> AsyncIterator[LavaLampState]:
+    """Yield states after a fixed delay while preserving receive spacing."""
+
+    if emit_delay_seconds < 0:
+        raise ValueError("emit_delay_seconds must be non-negative")
+    if emit_delay_seconds <= 0:
+        async for state in states:
+            yield state
+        return
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[tuple[float, LavaLampState] | BaseException | None] = (
+        asyncio.Queue()
+    )
+
+    async def produce() -> None:
+        try:
+            async for state in states:
+                queue.put_nowait((loop.time() + emit_delay_seconds, state))
+        except BaseException as err:
+            queue.put_nowait(err)
+        else:
+            queue.put_nowait(None)
+
+    task = asyncio.create_task(produce())
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            release_at, state = item
+            await asyncio.sleep(max(0.0, release_at - loop.time()))
+            yield state
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 class _SSEEvent:

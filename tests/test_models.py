@@ -17,6 +17,7 @@ def test_state_parses_api_response() -> None:
     assert state.red == 255
     assert state.green == 64
     assert state.blue == 0
+    assert state.rgb_list == [255, 64, 0]
     assert state.last_set_unix_ms == 1777951987215
     assert state.live is True
 

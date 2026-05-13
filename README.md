@@ -47,9 +47,9 @@ from lava_lamp import LavaLampClient
 
 
 async def main() -> None:
-    async with LavaLampClient("http://45.61.59.181:8080") as client:
+    async with LavaLampClient("https://api.neurolavalamp.com") as client:
         async for state in client.stream_states():
-            print(state.rgb, state.hex, state.live)
+            print(state.rgb_list, state.hex, state.live)
 
 
 asyncio.run(main())
@@ -61,14 +61,22 @@ You can also pass a callback:
 await client.watch(lambda state: print(state.rgb))
 ```
 
+To emit streamed updates later while preserving the original color order and
+spacing, pass a decimal delay in seconds:
+
+```python
+client = LavaLampClient(emit_delay_seconds=1.5)
+```
+
 ## API
 
 `LavaLampState` exposes:
 
 - `rgb`: `(red, green, blue)`
+- `rgb_list`: `[red, green, blue]`
 - `hex`: CSS-style hex color
 - `last_set_unix_ms`: timestamp for last color update
 - `live`: whether vedal is live/lamp is streaming
 
-The default base URL is `http://45.61.59.181:8080`, but pass another URL to
+The default base URL is `https://api.neurolavalamp.com`, but pass another URL to
 `LavaLampClient(...)` if the server moves.
