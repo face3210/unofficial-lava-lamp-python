@@ -81,8 +81,8 @@ class LavaLampState:
 
 @dataclass(frozen=True, slots=True)
 class ConnectionConfig:
-    fast_poll_interval: float = 0.25
-    offline_poll_interval: float = 30.0
+    fast_poll_interval: float = 0.10
+    offline_poll_interval: float = 10.0
     sse_retry_interval: float = 60.0
     heartbeat_timeout: float = 60.0
     initial_error_backoff: float = 1.0
